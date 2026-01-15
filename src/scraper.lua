@@ -2,72 +2,45 @@ local Config = require("zlibrary.config")
 local Api = require('zlibrary.api')
 
 local function extract_md5_and_link(line)
-    -- Match href="/md5/<md5hash>"
-    -- href="\/md5\/[a-f0-9]{32}"/
     local md5 = line:match('href="/md5/([a-fA-F0-9]+)"')
-
     if md5 and #md5 == 32 then
         return md5
     end
     return nil
 end
 
-
 local function extract_title(line)
-    -- Check if line contains an <h3> tag
     local content = line:match('<div class="font%-bold text%-violet%-900 line%-clamp%-%[5%]" data%-content="([^"]+)"')
-
     if content then
-        -- Trim leading and trailing whitespace
         content = content:match("^%s*(.-)%s*$")
-        -- Escape quotes and bullet characters
         content = content:gsub('"', '\\"')
         content = content:gsub("•", "\\u2022")
         print('Title: ', content)
         return content
     end
-
     return 'Could not retrieve title.'
 end
 
 local function extract_author(line)
-
-    -- Step 1: check if line contains the class combo
     if line:match('<div[^>]*class="[^"]*font%-bold[^"]*text%-amber%-900[^"]*line%-clamp%-%[2%][^"]*"') then
-        -- Step 2: try to capture the whole <div ... data-content="...">
         local block = line:match('<div[^>]*class="[^"]*font%-bold[^"]*text%-amber%-900[^"]*line%-clamp%-%[2%][^"]*" data%-content="[^"]+"')
-
         if block then
-            -- Step 3: extract just the data-content value
             local author = block:match('data%-content="([^"]+)"')
-
             if author then
                 print("Author:", author)
                 return author
             end
         end
     end
-
     return 'Could not retrieve author.'
 end
 
 local function extract_format(line)
-
     local div_text = line:match('<div class="text%-gray%-800[^>]*>[^<]+')
     if div_text then
-        -- Step 2: extract content after ">"
         local content = div_text:match('>([^<]+)')
-        
         if content then
-            -- Step 3: split content on " · "
-            --local parts = {}
-            --for part in content:gmatch("[^ ·]+") do
-            --    table.insert(parts, part)
-            --end
-            
-            -- Step 4: check if there are at least 2 parts
-            local format = nil
-            format = content:match("([A-Z][A-Z]+)")
+            local format = content:match("([A-Z][A-Z]+)")
             if format then
                 print('format: ', format)
                 return format
@@ -77,73 +50,104 @@ local function extract_format(line)
     return 'Could not retrieve format.'
 end
 
-
 local function extract_description(line)
-    local html = [[ <div class="line-clamp-[2] overflow-hidden break-words text-sm text-gray-600 mt-2 mb-2 leading-[1.3]">description text</div> ]]
-
     local div_block = line:match('<div[^>]*class="[^"]*line%-clamp%-%[2%][^"]*"[^>]*>(.-)</div>')
     print('desc: ', div_block)
-
     if div_block then
         local description = div_block
-    
-        -- Step 2: remove <script> blocks
         description = description:gsub('<script[^>]*>.-</script>', '')
-    
-        -- Step 3: remove <a> tags
         description = description:gsub('<a[^>]*>.-</a>', '')
-    
-        -- Step 4: remove all remaining HTML tags
         description = description:gsub('<[^>]->', '')
-    
-        -- Step 5: remove HTML entities like &nbsp;, &#123;, &amp;, etc.
         description = description:gsub('&[#a-zA-Z0-9]+;', '')
-    
-        -- Step 6: trim leading/trailing whitespace
         description = description:gsub('^%s+', ''):gsub('%s+$', '')
-    
         print("Description:", description)
         return description
     end
     print("Description: Could not retrieve")
-
     return 'Could not retrieve description.'
 end
 
---[[ function check_url_curl(url, command)
-    -- Try to start curl
-    local command = string.format('%s --connect-timeout 20 "%s"', command, url)
-    print('executing command:\n', command)
-    local handle, err = io.popen(
-        command, "r"
-    )
-    if not handle then
-        return "no_curl", err
+-- Check if external command is available
+local function command_exists(cmd)
+    local handle = io.popen("which " .. cmd .. " 2>/dev/null")
+    if not handle then return false end
+    local result = handle:read("*a")
+    handle:close()
+    return result and result ~= ""
+end
+
+-- Try to fetch using external curl/wget command
+local function fetch_with_external_command(url)
+    print('=== Trying external command for URL:', url)
+    
+    -- Try curl first
+    if command_exists("curl") then
+        print('=== Using curl')
+        local handle = io.popen('curl -L -s --max-time 20 "' .. url .. '" 2>&1')
+        if handle then
+            local result = handle:read("*a")
+            local success = handle:close()
+            if success and result and #result > 0 then
+                print('=== curl succeeded, got', #result, 'bytes')
+                return "success", result
+            end
+        end
     end
-
-    -- Read output
-    local output = handle:read("*a")
-
-    -- Close and get exit status
-    local ok, reason, code = handle:close()
-
-    if not ok then
-        -- curl started, but something failed (non-zero exit code)
-        return "network_error", string.format("reason=%s code=%d", reason, code)
+    
+    -- Try wget as fallback
+    if command_exists("wget") then
+        print('=== Using wget')
+        local temp_file = os.tmpname()
+        local cmd = string.format('wget -q -O "%s" --timeout=20 "%s" 2>&1', temp_file, url)
+        local handle = io.popen(cmd)
+        if handle then
+            handle:close()
+            local f = io.open(temp_file, "r")
+            if f then
+                local result = f:read("*a")
+                f:close()
+                os.remove(temp_file)
+                if result and #result > 0 then
+                    print('=== wget succeeded, got', #result, 'bytes')
+                    return "success", result
+                end
+            end
+        end
     end
-
-    return "success", output
-end ]]
+    
+    return "no_external_command", nil
+end
 
 function check_url(url)
+    print('=== DEBUG: check_url called with:', url)
+    
+    -- First try external command (curl/wget) as they often work better
+    local ext_status, ext_data = fetch_with_external_command(url)
+    if ext_status == "success" then
+        return "success", ext_data
+    end
+    
+    print('=== External command failed or not available, trying Api.makeHttpRequest')
+    
+    local user_session = Config.getUserSession()
+    
+    -- Extract hostname from URL for Host header
+    local hostname = url:match("://([^/]+)")
+    
     local headers = {
         ['Content-Type'] = 'text/html',
-        ["User-Agent"] = 'anna/7.81.0',
+        ["User-Agent"] = Config.USER_AGENT or 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        ["Host"] = hostname,  -- Explicitly set Host header
+        ["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        ["Accept-Language"] = "en-US,en;q=0.5",
     }
-    if user_id and user_key then
-        headers["Cookie"] = string.format("remix_userid=%s; remix_userkey=%s", user_id, user_key)
+    if user_session and user_session.user_id and user_session.user_key then
+        headers["Cookie"] = string.format("remix_userid=%s; remix_userkey=%s", user_session.user_id, user_session.user_key)
     end
 
+    print('=== DEBUG: Making HTTP request...')
+    print('=== DEBUG: Hostname:', hostname)
+    
     local http_result = Api.makeHttpRequest{
         url = url,
         method = "GET",
@@ -151,61 +155,90 @@ function check_url(url)
         timeout = 20,
     }
 
+    print('=== DEBUG: HTTP result type:', type(http_result))
+    if http_result then
+        print('=== DEBUG: HTTP result.status_code:', http_result.status_code)
+        print('=== DEBUG: HTTP result.error:', http_result.error)
+        print('=== DEBUG: HTTP result.body exists:', http_result.body ~= nil)
+        if http_result.body then
+            print('=== DEBUG: HTTP result.body length:', #http_result.body)
+        end
+    end
+
     -- Check if the API returned something valid
     if not http_result then
-        print('network error in check_url(), API didnt return valid value')
+        print('=== ERROR: network error in check_url(), API didnt return valid value')
+        return "network_error", nil
+    end
+
+    -- FIX: Check if there's an error field first
+    if http_result.error then
+        local error_msg = type(http_result.error) == "string" and http_result.error or "HTTP request error"
+        print('=== ERROR: HTTP result has error field:', error_msg)
         return "network_error", nil
     end
 
     if not http_result.status_code then
-        if http_result.error then
-            return tostring(http_result.error), nil
-        else
-            return "HTTP request returned invalid result", nil
-        end
+        print('=== ERROR: HTTP request returned invalid result (no status_code)')
+        return "HTTP request returned invalid result", nil
+    end
+
+    -- FIX: Check if status_code is actually a string error message (like DNS errors)
+    if type(http_result.status_code) == "string" then
+        print('=== ERROR: status_code is a string (DNS/network error):', http_result.status_code)
+        return "network_error", nil
     end
 
     http_result.status_code = tonumber(http_result.status_code)
 
+    -- Check if status_code conversion failed
+    if not http_result.status_code then
+        print('=== ERROR: DNS resolution error in check_url():', http_result.status_code)
+        return "dns_error", nil
+    end
+
     -- Now interpret the status
     if http_result.status_code == 200 then
-        print('success in check_url()')
+        print('=== SUCCESS: HTTP 200 in check_url()')
+        if not http_result.body then
+            print('=== WARNING: Status 200 but body is nil!')
+            return "success_no_body", nil
+        end
         return "success", http_result.body
     elseif http_result.status_code == 408 then
-        print('timeout in check_url()', http_result.status_code)
+        print('=== ERROR: timeout in check_url()', http_result.status_code)
         return "timeout", nil
     elseif http_result.status_code == 502 or http_result.status_code == 504 then
-        print('bad gateway in check_url()', http_result.status_code)
+        print('=== ERROR: bad gateway in check_url()', http_result.status_code)
         return "bad_gateway", nil
     elseif http_result.status_code >= 400 and http_result.status_code < 500 then
-        print('client error in check_url()', http_result.status_code)
+        print('=== ERROR: client error in check_url()', http_result.status_code)
         return "client_error_" .. tostring(http_result.status_code), nil
     elseif http_result.status_code >= 500 then
-        print('server error in check_url()', http_result.status_code)
+        print('=== ERROR: server error in check_url()', http_result.status_code)
         return "server_error_" .. tostring(http_result.status_code), nil
     else
-        print('unknown error in check_url()', http_result.status_code)
+        print('=== ERROR: unknown error in check_url()', http_result.status_code)
         return "unknown_error_" .. tostring(http_result.status_code), nil
     end
 end
 
-
 function scraper(query)
-
-    local aa_exts = {
-        [1] = ".se/",
-        [2] = ".org/",
-        [3] = ".li/",
+    -- Try multiple working mirrors of Anna's Archive
+    local aa_domains = {
+        "annas-archive.org",
+        "annas-archive.se",
+        "annas-archive.gs",
+        "annas-archive.li",
+        "annas-archive.pm",
+        "annas-archive.in",
     }
 
-    local ext_counter = 0
-
-    local annas_url = "https://annas-archive"
+    local domain_counter = 0
+    local protocols = {"https://"}  -- Start with HTTPS only
+    local protocol_counter = 0
     local page = "1"
 
-    --local http = require("socket/http")
-
-    --local query = 'marx'--io.read()
     if not query then
         query = ''
     end
@@ -217,7 +250,6 @@ function scraper(query)
     local ext = Config.getSearchExtensions()
     local order = Config.getSearchOrder()
     local src = 'lgli'
-    --local timeout = Config.getSearchTimeout()
     local filters = ''
 
     if languages then
@@ -243,55 +275,63 @@ function scraper(query)
     print('applying filters: ', filters)
 
     ::retry::
-    ext_counter = ext_counter + 1
-    annas_url = annas_url .. aa_exts[ext_counter]
-
+    domain_counter = domain_counter + 1
+    if domain_counter > #aa_domains then
+        domain_counter = 1
+        protocol_counter = protocol_counter + 1
+        if protocol_counter >= #protocols then
+            return "All domains and protocols failed. Anna's Archive may be blocked in your network."
+        end
+    end
+    
+    local annas_url = protocols[protocol_counter + 1] .. aa_domains[domain_counter] .. "/"
     local url = string.format("%ssearch?page=%s&q=%s%s", annas_url, page, encoded_query, filters)
+    
+    print('Attempting URL:', url)
+    print('Protocol:', protocols[protocol_counter + 1], 'Domain:', aa_domains[domain_counter])
     
     local status, data = check_url(url)
 
     if status == "no_curl" then
-        return "Curl is not installed or not in PATH:" .. data
-    elseif status == "network_error" then
-        if ext_counter < 3 then
-            print('Network error on ', annas_url)
-            print('Checking different mirror ...')
+        return "Curl is not installed or not in PATH: " .. (data or "unknown error")
+    elseif status == "network_error" or status == "dns_error" then
+        print('Network/DNS error on ', annas_url)
+        print('Checking different mirror/protocol ...')
+        goto retry
+    elseif status == "success" or status == "success_no_body" then
+        print("=== HTTP request succeeded, status:", status)
+
+        -- FIX: Check if data is nil before using it
+        if not data or data == "" then
+            print('=== ERROR: No data received from server (data is nil or empty)')
+            print('=== Retrying with different mirror...')
             goto retry
         end
-        return "Please check connection, Network/HTTP error:" .. data
-    elseif status == "success" then
-        print("Curl succeeded!")
+
+        print('=== SUCCESS: Received data, length:', #data)
+        print('=== First 100 chars:', string.sub(data, 1, 100))
 
         local ddos_guard_needle = 'der-gray-100<!doctype html><html><head><title>DDoS-Guard</titl'
 
         if data:find(ddos_guard_needle, 1, true) then
-            print("DDoS guard triggered, trying different mirror ...")
+            print("=== DDoS guard triggered, trying different mirror ...")
             goto retry
         end
 
-        --local split_pattern = '<div class="h%-%[110px%] flex flex%-col justify%-center ">'
         local split_pattern = 'pt-3 pb-3 border-b last:border-b-0 border-gray-100'
-        --'flex  pt-3 pb-3 border-b last:border-b-0 border-gray-100'
         
         result_html = split_pattern .. data
-
         
         segments = {}
         
         local start_pos = 1
-        --print(result_html)
-        if not result_html then
-            print('resulthtml is empty')
-        end
         
         while true do
             local s, e = result_html:find(split_pattern, start_pos, true)
             if not s then break end
             
-            -- Find the next occurrence of the split_pattern after the current one
             local next_s = result_html:find(split_pattern, e + 1, true)
             
-            -- Extract segment from current start to next start - 1, or end of string if none
             local segment
             if next_s then
                 segment = result_html:sub(s, next_s - 1)
@@ -362,13 +402,11 @@ function scraper(query)
 
         return book_lst
     else
-        if ext_counter < 3 then
-            print('Unknown error on ', annas_url)
-            print('Checking different mirror ...')
-            goto retry
-        end
+        print('Unknown error on ', annas_url, ': ', status)
+        print('Checking different mirror ...')
+        goto retry
     end
-    return "Unknown error occured: " .. data
+    return "Unknown error occurred"
 end
 
 function sanitize_name(name)
@@ -378,10 +416,8 @@ function sanitize_name(name)
     return sanitized
 end
 
-
 function save_file_bytes(path, bytes)
-
-    local f, err = io.open(path, "wb")         -- open binary
+    local f, err = io.open(path, "wb")
     if not f then 
         return nil, "open failed: "..tostring(err) 
     end
@@ -396,7 +432,6 @@ function save_file_bytes(path, bytes)
 end
 
 function download_book(book, path)
-
     local lgli_exts = {
         [1] = ".li/",
         [2] = ".is/",
@@ -405,9 +440,6 @@ function download_book(book, path)
     }
 
     for _, lgli_ext in ipairs(lgli_exts) do
-        
-        ::continue::
-
         local filename = path .. "/" .. sanitize_name(book.title) .. '_'.. sanitize_name(book.author) .. '.' .. book.format
         lgli_url = "https://libgen" .. lgli_ext
         print(book.title)
@@ -423,96 +455,52 @@ function download_book(book, path)
             local status, data = check_url(download_page)
 
             if status == "no_curl" then
-                return "Failed, curl is not installed or not in PATH:" .. data
+                return "Failed, curl is not installed or not in PATH: " .. (data or "")
             elseif status == "network_error" then
-                return "Failed, please check connection, Network/HTTP error:" .. data
+                return "Failed, please check connection, Network/HTTP error: " .. (data or "")
             elseif status == "success" then
                 print("Curl succeeded!")
+
+                -- FIX: Check if data exists before pattern matching
+                if not data then
+                    print("No data received from download page")
+                    goto continue
+                end
 
                 local download_link = data:match('href="([^"]*get%.php[^"]*)"')
 
                 if download_link then
-                    print("Found link:", download_link)    
-                    local filename = path .. "/" .. sanitize_name(book.title) .. '_'.. sanitize_name(book.author) .. '.' .. book.format
-                    --lgli_url = "https://libgen"
-                    print(book.title)
-            
-                    if not book.download then
-                        print('no source available')
-                        return "Failed, no download source available [lgli, zlib]."
-                    end
-                    
-                    if string.find(book.download, 'lgli', 1, true) then
-                        download_page = lgli_url .. "ads.php?md5=" .. book.md5
-                        local status, data = check_url(download_page)
-            
-                        if status == "no_curl" then
-                            return "Failed, curl is not installed or not in PATH:" .. data
-                        elseif status == "network_error" then
-                            return "Failed, please check connection, Network/HTTP error:" .. data
-                        elseif status == "success" then
-                            print("Curl succeeded!")
-            
-                            local download_link = data:match('href="([^"]*get%.php[^"]*)"')
-            
-                            if download_link then
-                                print("Found final link:", download_link)
-                                local download_url = lgli_url .. download_link
-                                local curl_command = "curl -# -L -o" .. "\"" .. filename .. "\""
-            
-                                local status, data = check_url(download_url )
-                                --print('data:\n', data)
-                                print('status:\n', status)
-                                print(filename)
-                                local status, msg = save_file_bytes(filename, data)
-                                print(msg)
-                                return filename
-            
-                            else
-                                print("No matching link found.")
-                                --goto continue
-                            end
-            
-                        end
-                        
-                    else
-                        print('book not available on libgen')
-                        --goto continue
-                    end
-
+                    print("Found final link:", download_link)
                     local download_url = lgli_url .. download_link
-                    local curl_command = "curl -# -L -o" .. "\"" .. filename .. "\""
 
-                    local status, data = check_url(download_url )
-                    --print('data:\n', data)
+                    local status, data = check_url(download_url)
                     print('status:\n', status)
                     print(filename)
-                    local status, msg = save_file_bytes(filename, data)
-                    print(msg)
-                    return filename
-
+                    
+                    if status == "success" and data then
+                        local status, msg = save_file_bytes(filename, data)
+                        print(msg)
+                        return filename
+                    else
+                        print("Failed to download file")
+                        goto continue
+                    end
                 else
                     print("No matching link found.")
-                    --return 'Failed, could not fetch download link from source page.'
+                    goto continue
                 end
-
             end
-            
         else
             print('book not available on libgen')
-            --return "Failed, book not available on libgen."
         end
+        
+        ::continue::
     end
     
     return 'Failed, could not fetch download link from source page.'
-    
 end
 
 if ... == nil then
-    -- This block runs only if executed directly:
     print("Running as main script")
-    scraper("hello")
     local book_lst = scraper('Marx')
-    --download_book(book_lst[2])
-
 end

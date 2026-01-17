@@ -3,6 +3,7 @@
 
 **Disclaimer:** This plugin is for educational purposes only. Please respect copyright laws and use this plugin responsibly.
 
+**This Plugin is a fork of the original plugin by fisher-hub. The changes made in this repo are already under review and probably will be pushed soon. **
 This KOReader plugin lets you search and download documents from Anna's Archive. Since it scrapes the HTML of Anna's Archive and tries to grab source links there is no need to log in with any account. However, as soon as there is changes to the Anna's Archive HTML code the scraper can (but it might not!) fail.
 
 Big thanks and credits to the devs of the [KOReader Zlibrary plugin](https://github.com/ZlibraryKO/zlibrary.koplugin) which inspired a huge amount of the frontend code and UI for my plugin and to the devs of [KindleFetch](https://github.com/justrals/KindleFetch) which inspired much of my webscraping 'backend' code. Without these projects the plugin would probably not run at all yet lol.

@@ -76,6 +76,41 @@ local function command_exists(cmd)
     return result and result ~= ""
 end
 
+-- Pure Lua socket-based HTTP implementation (fallback)
+local function fetch_with_lua_socket(url)
+    print('=== Trying pure Lua socket for URL:', url)
+    
+    local socket_ok, socket = pcall(require, "socket")
+    local http_ok, http = pcall(require, "socket.http")
+    local ltn12_ok, ltn12 = pcall(require, "ltn12")
+    
+    if not (socket_ok and http_ok and ltn12_ok) then
+        print('=== LuaSocket not available')
+        return "no_socket", nil
+    end
+    
+    local response_body = {}
+    local res, code, response_headers, status = http.request{
+        url = url,
+        method = "GET",
+        headers = {
+            ["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            ["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        },
+        sink = ltn12.sink.table(response_body),
+        redirect = true,
+    }
+    
+    if res and code == 200 then
+        local body = table.concat(response_body)
+        print('=== LuaSocket succeeded, got', #body, 'bytes')
+        return "success", body
+    else
+        print('=== LuaSocket failed, code:', code, 'status:', status)
+        return "socket_error", nil
+    end
+end
+
 -- Try to fetch using external curl/wget command
 local function fetch_with_external_command(url)
     print('=== Trying external command for URL:', url)
@@ -118,109 +153,113 @@ local function fetch_with_external_command(url)
     return "no_external_command", nil
 end
 
+-- Improved Api.makeHttpRequest with better error handling
+local function fetch_with_api(url)
+    print('=== Trying Api.makeHttpRequest for:', url)
+    
+    local user_session = Config.getUserSession()
+    local hostname = url:match("://([^/]+)")
+    
+    -- Try different header configurations
+    local header_configs = {
+        -- Minimal headers
+        {
+            ["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        },
+        -- Standard headers
+        {
+            ["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            ["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            ["Accept-Language"] = "en-US,en;q=0.5",
+        },
+        -- Full headers with session
+        {
+            ["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            ["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            ["Accept-Language"] = "en-US,en;q=0.5",
+            ["Host"] = hostname,
+        }
+    }
+    
+    for i, headers in ipairs(header_configs) do
+        print('=== API attempt', i, 'with', #headers, 'headers')
+        
+        -- Add session cookie if available
+        if user_session and user_session.user_id and user_session.user_key then
+            headers["Cookie"] = string.format("remix_userid=%s; remix_userkey=%s", 
+                                             user_session.user_id, user_session.user_key)
+        end
+        
+        local success, http_result = pcall(function()
+            return Api.makeHttpRequest{
+                url = url,
+                method = "GET",
+                headers = headers,
+                timeout = 20,
+            }
+        end)
+        
+        if not success then
+            print('=== API call threw error:', http_result)
+            goto next_attempt
+        end
+        
+        if not http_result then
+            print('=== API returned nil')
+            goto next_attempt
+        end
+        
+        -- Check for errors
+        if http_result.error then
+            print('=== API returned error:', http_result.error)
+            goto next_attempt
+        end
+        
+        -- Check status code
+        local status_code = tonumber(http_result.status_code)
+        if status_code == 200 and http_result.body and #http_result.body > 0 then
+            print('=== API succeeded with attempt', i, 'got', #http_result.body, 'bytes')
+            return "success", http_result.body
+        else
+            print('=== API attempt', i, 'failed - status:', status_code, 'body exists:', http_result.body ~= nil)
+        end
+        
+        ::next_attempt::
+    end
+    
+    return "api_failed", nil
+end
+
 function check_url(url)
     print('=== DEBUG: check_url called with:', url)
     
-    -- First try external command (curl/wget) as they often work better
+    -- Method 1: Try external command (curl/wget) - most reliable
     local ext_status, ext_data = fetch_with_external_command(url)
     if ext_status == "success" then
         return "success", ext_data
     end
     
-    print('=== External command failed or not available, trying Api.makeHttpRequest')
+    print('=== External command not available, trying alternative methods')
     
-    local user_session = Config.getUserSession()
+    -- Method 2: Try LuaSocket (pure Lua, no external dependencies)
+    local socket_status, socket_data = fetch_with_lua_socket(url)
+    if socket_status == "success" then
+        return "success", socket_data
+    end
     
-    -- Extract hostname from URL for Host header
-    local hostname = url:match("://([^/]+)")
+    print('=== LuaSocket not available or failed, trying Api.makeHttpRequest')
     
-    local headers = {
-        ['Content-Type'] = 'text/html',
-        ["User-Agent"] = Config.USER_AGENT or 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        ["Host"] = hostname,  -- Explicitly set Host header
-        ["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        ["Accept-Language"] = "en-US,en;q=0.5",
-    }
-    if user_session and user_session.user_id and user_session.user_key then
-        headers["Cookie"] = string.format("remix_userid=%s; remix_userkey=%s", user_session.user_id, user_session.user_key)
+    -- Method 3: Try Api.makeHttpRequest with multiple configurations
+    local api_status, api_data = fetch_with_api(url)
+    if api_status == "success" then
+        return "success", api_data
     end
-
-    print('=== DEBUG: Making HTTP request...')
-    print('=== DEBUG: Hostname:', hostname)
     
-    local http_result = Api.makeHttpRequest{
-        url = url,
-        method = "GET",
-        headers = headers,
-        timeout = 20,
-    }
-
-    print('=== DEBUG: HTTP result type:', type(http_result))
-    if http_result then
-        print('=== DEBUG: HTTP result.status_code:', http_result.status_code)
-        print('=== DEBUG: HTTP result.error:', http_result.error)
-        print('=== DEBUG: HTTP result.body exists:', http_result.body ~= nil)
-        if http_result.body then
-            print('=== DEBUG: HTTP result.body length:', #http_result.body)
-        end
-    end
-
-    -- Check if the API returned something valid
-    if not http_result then
-        print('=== ERROR: network error in check_url(), API didnt return valid value')
-        return "network_error", nil
-    end
-
-    -- FIX: Check if there's an error field first
-    if http_result.error then
-        local error_msg = type(http_result.error) == "string" and http_result.error or "HTTP request error"
-        print('=== ERROR: HTTP result has error field:', error_msg)
-        return "network_error", nil
-    end
-
-    if not http_result.status_code then
-        print('=== ERROR: HTTP request returned invalid result (no status_code)')
-        return "HTTP request returned invalid result", nil
-    end
-
-    -- FIX: Check if status_code is actually a string error message (like DNS errors)
-    if type(http_result.status_code) == "string" then
-        print('=== ERROR: status_code is a string (DNS/network error):', http_result.status_code)
-        return "network_error", nil
-    end
-
-    http_result.status_code = tonumber(http_result.status_code)
-
-    -- Check if status_code conversion failed
-    if not http_result.status_code then
-        print('=== ERROR: DNS resolution error in check_url():', http_result.status_code)
-        return "dns_error", nil
-    end
-
-    -- Now interpret the status
-    if http_result.status_code == 200 then
-        print('=== SUCCESS: HTTP 200 in check_url()')
-        if not http_result.body then
-            print('=== WARNING: Status 200 but body is nil!')
-            return "success_no_body", nil
-        end
-        return "success", http_result.body
-    elseif http_result.status_code == 408 then
-        print('=== ERROR: timeout in check_url()', http_result.status_code)
-        return "timeout", nil
-    elseif http_result.status_code == 502 or http_result.status_code == 504 then
-        print('=== ERROR: bad gateway in check_url()', http_result.status_code)
-        return "bad_gateway", nil
-    elseif http_result.status_code >= 400 and http_result.status_code < 500 then
-        print('=== ERROR: client error in check_url()', http_result.status_code)
-        return "client_error_" .. tostring(http_result.status_code), nil
-    elseif http_result.status_code >= 500 then
-        print('=== ERROR: server error in check_url()', http_result.status_code)
-        return "server_error_" .. tostring(http_result.status_code), nil
-    else
-        print('=== ERROR: unknown error in check_url()', http_result.status_code)
-        return "unknown_error_" .. tostring(http_result.status_code), nil
-    end
+    -- All methods failed
+    print('=== ERROR: All HTTP methods failed')
+    print('=== Tried: external commands (curl/wget), LuaSocket, Api.makeHttpRequest')
+    
+    return "network_error", nil
 end
 
 function scraper(query)
@@ -235,7 +274,7 @@ function scraper(query)
     }
 
     local domain_counter = 0
-    local protocols = {"https://"}  -- Start with HTTPS only
+    local protocols = {"https://"}
     local protocol_counter = 0
     local page = "1"
 
@@ -280,7 +319,7 @@ function scraper(query)
         domain_counter = 1
         protocol_counter = protocol_counter + 1
         if protocol_counter >= #protocols then
-            return "All domains and protocols failed. Anna's Archive may be blocked in your network."
+            return "All domains and protocols failed. Anna's Archive may be blocked or no working HTTP method available."
         end
     end
     
@@ -292,18 +331,15 @@ function scraper(query)
     
     local status, data = check_url(url)
 
-    if status == "no_curl" then
-        return "Curl is not installed or not in PATH: " .. (data or "unknown error")
-    elseif status == "network_error" or status == "dns_error" then
+    if status == "network_error" or status == "dns_error" then
         print('Network/DNS error on ', annas_url)
-        print('Checking different mirror/protocol ...')
+        print('Checking different mirror ...')
         goto retry
-    elseif status == "success" or status == "success_no_body" then
-        print("=== HTTP request succeeded, status:", status)
+    elseif status == "success" then
+        print("=== HTTP request succeeded")
 
-        -- FIX: Check if data is nil before using it
         if not data or data == "" then
-            print('=== ERROR: No data received from server (data is nil or empty)')
+            print('=== ERROR: No data received from server')
             print('=== Retrying with different mirror...')
             goto retry
         end
@@ -454,14 +490,11 @@ function download_book(book, path)
             print('download page on lgli: ', download_page)
             local status, data = check_url(download_page)
 
-            if status == "no_curl" then
-                return "Failed, curl is not installed or not in PATH: " .. (data or "")
-            elseif status == "network_error" then
+            if status == "network_error" then
                 return "Failed, please check connection, Network/HTTP error: " .. (data or "")
             elseif status == "success" then
-                print("Curl succeeded!")
+                print("Download page fetched successfully!")
 
-                -- FIX: Check if data exists before pattern matching
                 if not data then
                     print("No data received from download page")
                     goto continue

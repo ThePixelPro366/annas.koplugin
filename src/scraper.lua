@@ -1,6 +1,149 @@
 local Config = require("zlibrary.config")
 local Api = require('zlibrary.api')
 
+-- Cache configuration
+local CACHE_FILE = "annas_domains_cache.txt"
+local CACHE_DURATION = 2 * 24 * 60 * 60  -- 2 days in seconds
+
+-- Reads domains from cache
+local function read_cache()
+    local f = io.open(CACHE_FILE, "r")
+    if not f then
+        return nil, nil
+    end
+    
+    local timestamp_str = f:read("*l")
+    if not timestamp_str then
+        f:close()
+        return nil, nil
+    end
+    
+    local timestamp = tonumber(timestamp_str)
+    if not timestamp then
+        f:close()
+        return nil, nil
+    end
+    
+    -- Check whether cache is still valid
+    if os.time() - timestamp > CACHE_DURATION then
+        f:close()
+        print("=== Cache expired")
+        return nil, nil
+    end
+    
+    local domains = {}
+    for line in f:lines() do
+        if line and line ~= "" then
+            table.insert(domains, line)
+        end
+    end
+    f:close()
+    
+    if #domains > 0 then
+        print("=== Loaded", #domains, "domains from cache")
+        return domains, timestamp
+    end
+    
+    return nil, nil
+end
+
+-- Writes domains to cache
+local function write_cache(domains)
+    local f = io.open(CACHE_FILE, "w")
+    if not f then
+        print("=== Warning: Could not write cache file")
+        return false
+    end
+    
+    f:write(os.time() .. "\n")
+    for _, domain in ipairs(domains) do
+        f:write(domain .. "\n")
+    end
+    f:close()
+    
+    print("=== Cached", #domains, "domains")
+    return true
+end
+
+-- Extracts domains from Wikipedia HTML
+local function extract_domains_from_wikipedia(html)
+    local domains = {}
+    
+    -- Search for all annas-archive URLs
+    for url in html:gmatch('href="(https://annas%-archive%.[^/"]+)/?"') do
+        -- Extract only the domain part
+        local domain = url:match("https://(.+)")
+        if domain and not domains[domain] then
+            domains[domain] = true
+            table.insert(domains, domain)
+            print("=== Found domain:", domain)
+        end
+    end
+    
+    return domains
+end
+
+-- Fetches domains from Wikipedia
+local function fetch_domains_from_wikipedia()
+    print("=== Fetching domains from Wikipedia...")
+    
+    local wikipedia_url = "https://en.wikipedia.org/wiki/Anna%27s_Archive"
+    
+    -- Try using different methods
+    local status, data = check_url(wikipedia_url)
+    
+    if status ~= "success" or not data then
+        print("=== Failed to fetch Wikipedia page")
+        return nil
+    end
+    
+    print("=== Successfully fetched Wikipedia page")
+    
+    local domains = extract_domains_from_wikipedia(data)
+    
+    if #domains == 0 then
+        print("=== Warning: No domains found in Wikipedia page")
+        return nil
+    end
+    
+    print("=== Extracted", #domains, "domains from Wikipedia")
+    
+    -- Save to cache
+    write_cache(domains)
+    
+    return domains
+end
+
+-- Main function to retrieve domains
+local function get_annas_archive_domains()
+    -- Try loading from cache first
+    local cached_domains, cache_time = read_cache()
+    if cached_domains then
+        local age_hours = math.floor((os.time() - cache_time) / 3600)
+        print("=== Using cached domains (age:", age_hours, "hours)")
+        return cached_domains
+    end
+    
+    -- If cache is unavailable, fetch from Wikipedia
+    local domains = fetch_domains_from_wikipedia()
+    
+    if domains and #domains > 0 then
+        return domains
+    end
+    
+    -- Fallback: default domains if Wikipedia fails
+    print("=== Warning: Using fallback domains")
+    return {
+        "annas-archive.org",
+        "annas-archive.se",
+        "annas-archive.gs",
+        "annas-archive.li",
+        "annas-archive.pm",
+        "annas-archive.in",
+    }
+end
+
+
 local function extract_md5_and_link(line)
     local md5 = line:match('href="/md5/([a-fA-F0-9]+)"')
     if md5 and #md5 == 32 then
@@ -67,7 +210,6 @@ local function extract_description(line)
     return 'Could not retrieve description.'
 end
 
--- Check if external command is available
 local function command_exists(cmd)
     local handle = io.popen("which " .. cmd .. " 2>/dev/null")
     if not handle then return false end
@@ -76,7 +218,6 @@ local function command_exists(cmd)
     return result and result ~= ""
 end
 
--- Pure Lua socket-based HTTP implementation (fallback)
 local function fetch_with_lua_socket(url)
     print('=== Trying pure Lua socket for URL:', url)
     
@@ -111,11 +252,9 @@ local function fetch_with_lua_socket(url)
     end
 end
 
--- Try to fetch using external curl/wget command
 local function fetch_with_external_command(url)
     print('=== Trying external command for URL:', url)
     
-    -- Try curl first
     if command_exists("curl") then
         print('=== Using curl')
         local handle = io.popen('curl -L -s --max-time 20 "' .. url .. '" 2>&1')
@@ -129,7 +268,6 @@ local function fetch_with_external_command(url)
         end
     end
     
-    -- Try wget as fallback
     if command_exists("wget") then
         print('=== Using wget')
         local temp_file = os.tmpname()
@@ -153,26 +291,21 @@ local function fetch_with_external_command(url)
     return "no_external_command", nil
 end
 
--- Improved Api.makeHttpRequest with better error handling
 local function fetch_with_api(url)
     print('=== Trying Api.makeHttpRequest for:', url)
     
     local user_session = Config.getUserSession()
     local hostname = url:match("://([^/]+)")
     
-    -- Try different header configurations
     local header_configs = {
-        -- Minimal headers
         {
             ["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         },
-        -- Standard headers
         {
             ["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
             ["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             ["Accept-Language"] = "en-US,en;q=0.5",
         },
-        -- Full headers with session
         {
             ["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
             ["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -184,7 +317,6 @@ local function fetch_with_api(url)
     for i, headers in ipairs(header_configs) do
         print('=== API attempt', i, 'with', #headers, 'headers')
         
-        -- Add session cookie if available
         if user_session and user_session.user_id and user_session.user_key then
             headers["Cookie"] = string.format("remix_userid=%s; remix_userkey=%s", 
                                              user_session.user_id, user_session.user_key)
@@ -209,13 +341,11 @@ local function fetch_with_api(url)
             goto next_attempt
         end
         
-        -- Check for errors
         if http_result.error then
             print('=== API returned error:', http_result.error)
             goto next_attempt
         end
         
-        -- Check status code
         local status_code = tonumber(http_result.status_code)
         if status_code == 200 and http_result.body and #http_result.body > 0 then
             print('=== API succeeded with attempt', i, 'got', #http_result.body, 'bytes')
@@ -233,7 +363,6 @@ end
 function check_url(url)
     print('=== DEBUG: check_url called with:', url)
     
-    -- Method 1: Try external command (curl/wget) - most reliable
     local ext_status, ext_data = fetch_with_external_command(url)
     if ext_status == "success" then
         return "success", ext_data
@@ -241,7 +370,6 @@ function check_url(url)
     
     print('=== External command not available, trying alternative methods')
     
-    -- Method 2: Try LuaSocket (pure Lua, no external dependencies)
     local socket_status, socket_data = fetch_with_lua_socket(url)
     if socket_status == "success" then
         return "success", socket_data
@@ -249,13 +377,11 @@ function check_url(url)
     
     print('=== LuaSocket not available or failed, trying Api.makeHttpRequest')
     
-    -- Method 3: Try Api.makeHttpRequest with multiple configurations
     local api_status, api_data = fetch_with_api(url)
     if api_status == "success" then
         return "success", api_data
     end
     
-    -- All methods failed
     print('=== ERROR: All HTTP methods failed')
     print('=== Tried: external commands (curl/wget), LuaSocket, Api.makeHttpRequest')
     
@@ -263,15 +389,10 @@ function check_url(url)
 end
 
 function scraper(query)
-    -- Try multiple working mirrors of Anna's Archive
-    local aa_domains = {
-        "annas-archive.org",
-        "annas-archive.se",
-        "annas-archive.gs",
-        "annas-archive.li",
-        "annas-archive.pm",
-        "annas-archive.in",
-    }
+    -- Hole aktuelle Domains von Wikipedia (mit Cache)
+    local aa_domains = get_annas_archive_domains()
+    
+    print("=== Using", #aa_domains, "Anna's Archive domains")
 
     local domain_counter = 0
     local protocols = {"https://"}

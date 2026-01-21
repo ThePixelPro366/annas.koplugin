@@ -118,7 +118,7 @@ To make this change permanent, you must set the DNS directly in your **router se
 
 Search on Google for something like:
 
-> **“Change DNS to 1.1.1.1 on <your router model>”**
+> **“Change DNS to 1.1.1.1 on {Your Router Model}”**
 
 and follow the instructions for your specific router.
 

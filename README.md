@@ -26,10 +26,6 @@ The plugin was tested on KOReader installed on a Kindle Paperwhite 11th generati
 5.  Under Search Results click on the entry you are interested in.
 6.  Finally hit `Format: (tap to download)` and confirm again by tapping `Download`.
 
-Here’s a cleaned-up, grammatically corrected, and more readable version. I kept the meaning the same but made it clearer and easier to follow:
-
----
-
 ## DNS Settings
 
 **On some devices, you may need to change your DNS provider to 1.1.1.1 (Cloudflare).**

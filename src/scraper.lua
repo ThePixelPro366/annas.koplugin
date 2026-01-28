@@ -647,7 +647,7 @@ function download_book(book, path)
 
                 if not data then
                     print("No data received from download page")
-                    goto continue
+                    goto continue_download
                 end
 
                 -- Extract the actual download link from the page
@@ -674,7 +674,7 @@ function download_book(book, path)
             print('book not available on libgen')
         end
         
-        ::continue::
+        ::continue_download::
     end
     
     return 'Failed, could not fetch download link from source page.'

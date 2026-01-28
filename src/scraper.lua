@@ -145,6 +145,7 @@ end
 
 
 local function extract_md5_and_link(line)
+    -- Extract MD5 hash from href="/md5/<hash>" pattern
     local md5 = line:match('href="/md5/([a-fA-F0-9]+)"')
     if md5 and #md5 == 32 then
         return md5
@@ -153,11 +154,12 @@ local function extract_md5_and_link(line)
 end
 
 local function extract_title(line)
+    -- Extract title from data-content attribute and clean it
     local content = line:match('<div class="font%-bold text%-violet%-900 line%-clamp%-%[5%]" data%-content="([^"]+)"')
     if content then
-        content = content:match("^%s*(.-)%s*$")
-        content = content:gsub('"', '\\"')
-        content = content:gsub("•", "\\u2022")
+        content = content:match("^%s*(.-)%s*$")  -- trim whitespace
+        content = content:gsub('"', '\\"')     -- escape quotes
+        content = content:gsub("•", "\\u2022") -- escape bullet points
         print('Title: ', content)
         return content
     end
@@ -165,6 +167,7 @@ local function extract_title(line)
 end
 
 local function extract_author(line)
+    -- Extract author from specific div class combination
     if line:match('<div[^>]*class="[^"]*font%-bold[^"]*text%-amber%-900[^"]*line%-clamp%-%[2%][^"]*"') then
         local block = line:match('<div[^>]*class="[^"]*font%-bold[^"]*text%-amber%-900[^"]*line%-clamp%-%[2%][^"]*" data%-content="[^"]+"')
         if block then
@@ -179,11 +182,12 @@ local function extract_author(line)
 end
 
 local function extract_format(line)
+    -- Extract file format (PDF, EPUB, etc.) from text content
     local div_text = line:match('<div class="text%-gray%-800[^>]*>[^<]+')
     if div_text then
         local content = div_text:match('>([^<]+)')
         if content then
-            local format = content:match("([A-Z][A-Z]+)")
+            local format = content:match("([A-Z][A-Z]+)")  -- match uppercase format like PDF, EPUB
             if format then
                 print('format: ', format)
                 return format
@@ -194,15 +198,16 @@ local function extract_format(line)
 end
 
 local function extract_description(line)
+    -- Extract and clean description text from HTML
     local div_block = line:match('<div[^>]*class="[^"]*line%-clamp%-%[2%][^"]*"[^>]*>(.-)</div>')
     print('desc: ', div_block)
     if div_block then
         local description = div_block
-        description = description:gsub('<script[^>]*>.-</script>', '')
-        description = description:gsub('<a[^>]*>.-</a>', '')
-        description = description:gsub('<[^>]->', '')
-        description = description:gsub('&[#a-zA-Z0-9]+;', '')
-        description = description:gsub('^%s+', ''):gsub('%s+$', '')
+        description = description:gsub('<script[^>]*>.-</script>', '')  -- remove scripts
+        description = description:gsub('<a[^>]*>.-</a>', '')           -- remove links
+        description = description:gsub('<[^>]->', '')                -- remove HTML tags
+        description = description:gsub('&[#a-zA-Z0-9]+;', '')          -- remove HTML entities
+        description = description:gsub('^%s+', ''):gsub('%s+$', '')  -- trim whitespace
         print("Description:", description)
         return description
     end
@@ -210,6 +215,7 @@ local function extract_description(line)
     return 'Could not retrieve description.'
 end
 
+-- Check if external command (curl/wget) is available
 local function command_exists(cmd)
     local handle = io.popen("which " .. cmd .. " 2>/dev/null")
     if not handle then return false end
@@ -218,6 +224,7 @@ local function command_exists(cmd)
     return result and result ~= ""
 end
 
+-- Pure Lua HTTP implementation using LuaSocket (fallback method)
 local function fetch_with_lua_socket(url)
     print('=== Trying pure Lua socket for URL:', url)
     
@@ -252,9 +259,11 @@ local function fetch_with_lua_socket(url)
     end
 end
 
+-- Try external commands (curl/wget) for HTTP requests
 local function fetch_with_external_command(url)
     print('=== Trying external command for URL:', url)
     
+    -- Try curl first (most reliable)
     if command_exists("curl") then
         print('=== Using curl')
         local handle = io.popen('curl -L -s --max-time 20 "' .. url .. '" 2>&1')
@@ -268,6 +277,7 @@ local function fetch_with_external_command(url)
         end
     end
     
+    -- Try wget as fallback
     if command_exists("wget") then
         print('=== Using wget')
         local temp_file = os.tmpname()
@@ -291,21 +301,26 @@ local function fetch_with_external_command(url)
     return "no_external_command", nil
 end
 
+-- Try KOReader's API with multiple header configurations
 local function fetch_with_api(url)
     print('=== Trying Api.makeHttpRequest for:', url)
     
     local user_session = Config.getUserSession()
     local hostname = url:match("://([^/]+)")
     
+    -- Try different header configurations for compatibility
     local header_configs = {
+        -- Minimal headers
         {
             ["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         },
+        -- Standard headers
         {
             ["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
             ["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             ["Accept-Language"] = "en-US,en;q=0.5",
         },
+        -- Full headers with session
         {
             ["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
             ["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -317,6 +332,7 @@ local function fetch_with_api(url)
     for i, headers in ipairs(header_configs) do
         print('=== API attempt', i, 'with', #headers, 'headers')
         
+        -- Add session cookie if available
         if user_session and user_session.user_id and user_session.user_key then
             headers["Cookie"] = string.format("remix_userid=%s; remix_userkey=%s", 
                                              user_session.user_id, user_session.user_key)
@@ -360,9 +376,11 @@ local function fetch_with_api(url)
     return "api_failed", nil
 end
 
+-- Main HTTP request function with three-tier fallback system
 function check_url(url)
     print('=== DEBUG: check_url called with:', url)
     
+    -- Method 1: Try external commands (curl/wget) - most reliable
     local ext_status, ext_data = fetch_with_external_command(url)
     if ext_status == "success" then
         return "success", ext_data
@@ -370,6 +388,7 @@ function check_url(url)
     
     print('=== External command not available, trying alternative methods')
     
+    -- Method 2: Try LuaSocket (pure Lua, no external dependencies)
     local socket_status, socket_data = fetch_with_lua_socket(url)
     if socket_status == "success" then
         return "success", socket_data
@@ -377,11 +396,13 @@ function check_url(url)
     
     print('=== LuaSocket not available or failed, trying Api.makeHttpRequest')
     
+    -- Method 3: Try KOReader's API with multiple configurations
     local api_status, api_data = fetch_with_api(url)
     if api_status == "success" then
         return "success", api_data
     end
     
+    -- All methods failed
     print('=== ERROR: All HTTP methods failed')
     print('=== Tried: external commands (curl/wget), LuaSocket, Api.makeHttpRequest')
     
@@ -389,7 +410,7 @@ function check_url(url)
 end
 
 function scraper(query)
-    -- Hole aktuelle Domains von Wikipedia (mit Cache)
+    -- Get current Anna's Archive domains from Wikipedia (with caching)
     local aa_domains = get_annas_archive_domains()
     
     print("=== Using", #aa_domains, "Anna's Archive domains")
@@ -475,6 +496,7 @@ function scraper(query)
             goto retry
         end
 
+        -- Split HTML into book entries using consistent pattern
         local split_pattern = 'pt-3 pb-3 border-b last:border-b-0 border-gray-100'
         
         result_html = split_pattern .. data
@@ -487,6 +509,7 @@ function scraper(query)
             local s, e = result_html:find(split_pattern, start_pos, true)
             if not s then break end
             
+            -- Find next occurrence to extract individual segments
             local next_s = result_html:find(split_pattern, e + 1, true)
             
             local segment
@@ -573,8 +596,9 @@ function sanitize_name(name)
     return sanitized
 end
 
+-- Save binary data to file
 function save_file_bytes(path, bytes)
-    local f, err = io.open(path, "wb")
+    local f, err = io.open(path, "wb")  -- open in binary mode
     if not f then 
         return nil, "open failed: "..tostring(err) 
     end
@@ -588,7 +612,9 @@ function save_file_bytes(path, bytes)
     return true, "saved file to: " .. path
 end
 
+-- Download book from Library Genesis mirrors
 function download_book(book, path)
+    -- Try different Library Genesis mirrors
     local lgli_exts = {
         [1] = ".li/",
         [2] = ".is/",
@@ -597,6 +623,8 @@ function download_book(book, path)
     }
 
     for _, lgli_ext in ipairs(lgli_exts) do
+        ::continue::
+
         local filename = path .. "/" .. sanitize_name(book.title) .. '_'.. sanitize_name(book.author) .. '.' .. book.format
         lgli_url = "https://libgen" .. lgli_ext
         print(book.title)
@@ -606,6 +634,7 @@ function download_book(book, path)
             return "Failed, no download source available [lgli, zlib]."
         end
         
+        -- Check if book is available on Library Genesis
         if string.find(book.download, 'lgli', 1, true) then
             download_page = lgli_url .. "ads.php?md5=" .. book.md5
             print('download page on lgli: ', download_page)
@@ -621,29 +650,26 @@ function download_book(book, path)
                     goto continue
                 end
 
+                -- Extract the actual download link from the page
                 local download_link = data:match('href="([^"]*get%.php[^"]*)"')
 
                 if download_link then
                     print("Found final link:", download_link)
                     local download_url = lgli_url .. download_link
 
-                    local status, data = check_url(download_url)
+                    local status, data = check_url(download_url )
                     print('status:\n', status)
                     print(filename)
-                    
-                    if status == "success" and data then
-                        local status, msg = save_file_bytes(filename, data)
-                        print(msg)
-                        return filename
-                    else
-                        print("Failed to download file")
-                        goto continue
-                    end
+                    local status, msg = save_file_bytes(filename, data)
+                    print(msg)
+                    return filename
+
                 else
                     print("No matching link found.")
-                    goto continue
                 end
+
             end
+            
         else
             print('book not available on libgen')
         end
@@ -654,6 +680,7 @@ function download_book(book, path)
     return 'Failed, could not fetch download link from source page.'
 end
 
+-- Main execution block (runs when script is executed directly)
 if ... == nil then
     print("Running as main script")
     local book_lst = scraper('Marx')

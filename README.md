@@ -45,7 +45,7 @@ Follow these steps:
    **Settings → Network → SSH Server → No Password** (for simplicity).
 
 2. You will see a prompt with connection information.
-   Look for an IP address like `192.168.179.xxx`.
+   Look for an IP address like     `192.168.179.xxx`.
    This is your device’s IP.
 
 3. On your PC, open a terminal and run:
@@ -113,21 +113,22 @@ Follow these steps:
   
 #### udhcpc
 
-1. run
+1. Run
 
 ```sh
 vi /usr/share/udhcpc/default.script
 ```
 
-2. enter insert mode by pressing `i` on your keyboard
+2. Enter insert mode by pressing `i` on your keyboard
 
-3. add the line `echo nameserver 1.1.1.1 >> $RESOLV_CONF` above `echo -n > $RESOLV_CONF`
+3. Add the line `echo nameserver 1.1.1.1 >> $RESOLV_CONF` above `echo -n > $RESOLV_CONF`
 
-4. save and quit with `ESC` and then `:wq`
+4. Save and Quit with `ESC` and then `:wq`
 
-5. Finally, if you want this change to be permanent, you'll need to run the following commands:
+5. Finally, if you want this change to be permanent, you'll need to run this command:
 
- `mntroot rw` to set your filesystem to writable
+ `mntroot rw` 
+ This will set your filesystem to writable.
 
 #### Finishing up
 
@@ -136,7 +137,11 @@ which should prevent future updates from overwriting your changes. Simply run `c
 you modified. To undo these changes later simply run `chattr -i` against the same files. 
   
 • `chattr +i /usr/share/udhcpc/default.script` for udhcpc
-• `chattr +i /etc/resolv.conf` and `chattr +i /etc/dhcpcd.conf`
+
+• `chattr +i /etc/resolv.conf` and
+
+`chattr +i /etc/dhcpcd.conf`
+for dhcp
 
 - Reboot your device and try again.
 

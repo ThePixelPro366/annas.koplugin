@@ -135,13 +135,15 @@ vi /usr/share/udhcpc/default.script
 To make these changes 'permanent' you can set the files you touched to be immutable, even to `root`, 
 which should prevent future updates from overwriting your changes. Simply run `chattr +` to the files
 you modified. To undo these changes later simply run `chattr -i` against the same files. 
-  
-• `chattr +i /usr/share/udhcpc/default.script` for udhcpc
 
-• `chattr +i /etc/resolv.conf` and
+**For udhcpc**:
+ 
+• `chattr +i /usr/share/udhcpc/default.script` 
 
+**For dhcp**:
+• `chattr +i /etc/resolv.conf`
+and
 `chattr +i /etc/dhcpcd.conf`
-for dhcp
 
 - Reboot your device and try again.
 

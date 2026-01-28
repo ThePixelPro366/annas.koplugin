@@ -36,27 +36,35 @@ You only need to do this if Anna’s Archive repeatedly does not work, for examp
 * No results found (even when searching for something general)
 * “All protocols failed” errors
 
-### Temporary fix (Kobo & Kindle)
-
-On Kobo and Kindle devices, this change is **temporary** and will reset when you connect to a new Wi-Fi network.
+### Fix (Kobo & Kindle)
 
 Follow these steps:
 
-1. Open an SSH session using KOReader.
+. Open an SSH session using KOReader.
    Go to:
    **Settings → Network → SSH Server → No Password** (for simplicity).
 
-2. You will see a prompt with connection information.
+. You will see a prompt with connection information.
    Look for an IP address like `192.168.179.xxx`.
    This is your device’s IP.
 
-3. On your PC, open a terminal and run:
+. On your PC, open a terminal and run:
 
    ```
    ssh -p 2222 root@<IP_FROM_ABOVE>
    ```
+   
+. Run:
 
-4. Edit the DHCP config file:
+   ```sh
+   ls /etc/ | grep dhcp
+   ```
+   
+   If it returns `udhcpd.conf` then jump to the **udhcpc** section if it is `dhcpcd.conf` then follow the instructions in the **DHCP** section
+   
+#### DHCP
+
+. Edit the DHCP config file:
 
    ```
    vi /etc/dhcpcd.conf
@@ -74,7 +82,7 @@ Follow these steps:
    nohook lookup-hostname, resolv.conf
    ```
 
-5. Press **ESC**, then type:
+. Press **ESC**, then type:
 
    ```
    :wq
@@ -82,7 +90,7 @@ Follow these steps:
 
    and press Enter.
 
-6. Now edit the DNS resolver file:
+. Now edit the DNS resolver file:
 
    ```
    vi /etc/resolv.conf
@@ -94,7 +102,7 @@ Follow these steps:
    nameserver 1.1.1.1
    ```
 
-7. Press **ESC**, then type:
+. Press **ESC**, then type:
 
    ```
    :wq
@@ -102,7 +110,35 @@ Follow these steps:
 
    and press Enter.
 
-8. Reboot your device and try again.
+  
+#### udhcpc
+
+. run
+
+```sh
+vi /usr/share/udhcpc/default.script
+```
+
+. enter insert mode by pressing `i` on your keyboard
+
+. add the line `echo nameserver 1.1.1.1 >> $RESOLV_CONF` above `echo -n > $RESOLV_CONF`
+
+. save and quit with `ESC` and then `:wq`
+
+. Finally, if you want this change to be permanent, you'll need to run the following commands:
+
+. `mntroot rw` to set your filesystem to writable
+
+#### Finishing up
+
+To make these changes 'permanent' you can set the files you touched to be immutable, even to `root`, 
+which should prevent future updates from overwriting your changes. Simply run `chattr +` to the files
+you modified. To undo these changes later simply run `chattr -i` against the same files. 
+  
+- `chattr +i /usr/share/udhcpc/default.script` for udhcpc
+- `chattr +i /etc/resolv.conf` and `chattr +i /etc/dhcpcd.conf`
+
+- Reboot your device and try again.
 
   Done!
 

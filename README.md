@@ -40,21 +40,21 @@ You only need to do this if Anna’s Archive repeatedly does not work, for examp
 
 Follow these steps:
 
-. Open an SSH session using KOReader.
+1. Open an SSH session using KOReader.
    Go to:
    **Settings → Network → SSH Server → No Password** (for simplicity).
 
-. You will see a prompt with connection information.
+2. You will see a prompt with connection information.
    Look for an IP address like `192.168.179.xxx`.
    This is your device’s IP.
 
-. On your PC, open a terminal and run:
+3. On your PC, open a terminal and run:
 
    ```
    ssh -p 2222 root@<IP_FROM_ABOVE>
    ```
    
-. Run:
+4. Run:
 
    ```sh
    ls /etc/ | grep dhcp
@@ -64,7 +64,7 @@ Follow these steps:
    
 #### DHCP
 
-. Edit the DHCP config file:
+1. Edit the DHCP config file:
 
    ```
    vi /etc/dhcpcd.conf
@@ -76,13 +76,13 @@ Follow these steps:
    nohook lookup-hostname
    ```
 
-   Press **i** to enter insert mode and change it to:
+  2. Press **i** to enter insert mode and change it to:
 
    ```
    nohook lookup-hostname, resolv.conf
    ```
 
-. Press **ESC**, then type:
+3. Press **ESC**, then type:
 
    ```
    :wq
@@ -90,7 +90,7 @@ Follow these steps:
 
    and press Enter.
 
-. Now edit the DNS resolver file:
+4. Now edit the DNS resolver file:
 
    ```
    vi /etc/resolv.conf
@@ -102,7 +102,7 @@ Follow these steps:
    nameserver 1.1.1.1
    ```
 
-. Press **ESC**, then type:
+5. Press **ESC**, then type:
 
    ```
    :wq
@@ -113,21 +113,21 @@ Follow these steps:
   
 #### udhcpc
 
-. run
+1. run
 
 ```sh
 vi /usr/share/udhcpc/default.script
 ```
 
-. enter insert mode by pressing `i` on your keyboard
+2. enter insert mode by pressing `i` on your keyboard
 
-. add the line `echo nameserver 1.1.1.1 >> $RESOLV_CONF` above `echo -n > $RESOLV_CONF`
+3. add the line `echo nameserver 1.1.1.1 >> $RESOLV_CONF` above `echo -n > $RESOLV_CONF`
 
-. save and quit with `ESC` and then `:wq`
+4. save and quit with `ESC` and then `:wq`
 
-. Finally, if you want this change to be permanent, you'll need to run the following commands:
+5. Finally, if you want this change to be permanent, you'll need to run the following commands:
 
-. `mntroot rw` to set your filesystem to writable
+ `mntroot rw` to set your filesystem to writable
 
 #### Finishing up
 
@@ -135,8 +135,8 @@ To make these changes 'permanent' you can set the files you touched to be immuta
 which should prevent future updates from overwriting your changes. Simply run `chattr +` to the files
 you modified. To undo these changes later simply run `chattr -i` against the same files. 
   
-- `chattr +i /usr/share/udhcpc/default.script` for udhcpc
-- `chattr +i /etc/resolv.conf` and `chattr +i /etc/dhcpcd.conf`
+• `chattr +i /usr/share/udhcpc/default.script` for udhcpc
+• `chattr +i /etc/resolv.conf` and `chattr +i /etc/dhcpcd.conf`
 
 - Reboot your device and try again.
 
@@ -144,7 +144,7 @@ you modified. To undo these changes later simply run `chattr -i` against the sam
 
 ---
 
-### Permanent fix (recommended)
+### Permanent fix without changing root write permissions(recommended)
 
 To make this change permanent, you must set the DNS directly in your **router settings**.
 
